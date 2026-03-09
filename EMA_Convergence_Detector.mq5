@@ -16,7 +16,8 @@
 //--- Input parameters
 input int       InpFastPeriod      = 12;           // Fast EMA period
 input int       InpSlowPeriod      = 26;           // Slow EMA period
-input double    InpThreshold       = 0.05;         // Convergence acceleration threshold
+input double    InpBuyThreshold    = 0.05;         // Entry threshold (convergence acceleration)
+input double    InpCloseThreshold  = 0.05;         // Exit threshold (convergence acceleration)
 input double    InpRiskPct         = 2.0;           // Risk per trade (% of balance)
 input double    InpStopLossPct     = 1.0;           // Stop-loss percentage (%)
 input int       InpCrossConfBars   = 3;             // Bars to confirm EMA cross
@@ -110,7 +111,7 @@ void OnTick()
    }
 
    //--- Check for BUY signal
-   if(buyThresholdVal >= InpThreshold)
+   if(buyThresholdVal >= InpBuyThreshold)
    {
       if(!HasOpenPosition(POSITION_TYPE_BUY))
       {
@@ -144,7 +145,7 @@ void OnTick()
    }
 
    //--- Check for CLOSE signal
-   if(closeThresholdVal >= InpThreshold)
+   if(closeThresholdVal >= InpCloseThreshold)
    {
       if(CloseAllBuyPositions())
          Print("CLOSE signal: threshold=", closeThresholdVal);
@@ -315,9 +316,9 @@ void DrawThresholdBar(datetime time, double buyVal, double closeVal)
       double range = iHigh(_Symbol, PERIOD_CURRENT, 0) - low;
       if(range <= 0) range = _Point * 100;
 
-      // Scale threshold into price space: bar height proportional to threshold
-      // Normalize so that threshold == InpThreshold maps to ~30% of candle range
-      double scaleFactor = (range * 0.3) / InpThreshold;
+      // Use the larger threshold for consistent scaling
+      double maxThr = MathMax(InpBuyThreshold, InpCloseThreshold);
+      double scaleFactor = (range * 0.3) / maxThr;
       double barHeight   = buyVal * scaleFactor;
       double basePrice   = low - range * 0.15;
 
@@ -332,17 +333,17 @@ void DrawThresholdBar(datetime time, double buyVal, double closeVal)
          ObjectSetInteger(0, name, OBJPROP_HIDDEN, true);
       }
 
-      // Threshold trigger line
-      string thrLine = "EMA_CONV_THR_LINE";
-      double thrPrice = basePrice + InpThreshold * scaleFactor;
-      if(!ObjectFind(0, thrLine))
-         ObjectCreate(0, thrLine, OBJ_HLINE, 0, 0, thrPrice);
-      ObjectSetDouble(0, thrLine, OBJPROP_PRICE, thrPrice);
-      ObjectSetInteger(0, thrLine, OBJPROP_COLOR, clrGray);
-      ObjectSetInteger(0, thrLine, OBJPROP_STYLE, STYLE_DOT);
-      ObjectSetInteger(0, thrLine, OBJPROP_WIDTH, 1);
-      ObjectSetInteger(0, thrLine, OBJPROP_SELECTABLE, false);
-      ObjectSetInteger(0, thrLine, OBJPROP_HIDDEN, true);
+      // BUY threshold trigger line
+      string thrLineBuy = "EMA_CONV_THR_LINE_BUY";
+      double thrPriceBuy = basePrice + InpBuyThreshold * scaleFactor;
+      if(!ObjectFind(0, thrLineBuy))
+         ObjectCreate(0, thrLineBuy, OBJ_HLINE, 0, 0, thrPriceBuy);
+      ObjectSetDouble(0, thrLineBuy, OBJPROP_PRICE, thrPriceBuy);
+      ObjectSetInteger(0, thrLineBuy, OBJPROP_COLOR, InpThresholdBuyClr);
+      ObjectSetInteger(0, thrLineBuy, OBJPROP_STYLE, STYLE_DOT);
+      ObjectSetInteger(0, thrLineBuy, OBJPROP_WIDTH, 1);
+      ObjectSetInteger(0, thrLineBuy, OBJPROP_SELECTABLE, false);
+      ObjectSetInteger(0, thrLineBuy, OBJPROP_HIDDEN, true);
    }
 
    // Draw CLOSE-side threshold (negative direction, red)
@@ -353,7 +354,8 @@ void DrawThresholdBar(datetime time, double buyVal, double closeVal)
       double range = iHigh(_Symbol, PERIOD_CURRENT, 0) - low;
       if(range <= 0) range = _Point * 100;
 
-      double scaleFactor = (range * 0.3) / InpThreshold;
+      double maxThr = MathMax(InpBuyThreshold, InpCloseThreshold);
+      double scaleFactor = (range * 0.3) / maxThr;
       double barHeight   = closeVal * scaleFactor;
       double basePrice   = low - range * 0.15;
 
@@ -367,11 +369,23 @@ void DrawThresholdBar(datetime time, double buyVal, double closeVal)
          ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
          ObjectSetInteger(0, name, OBJPROP_HIDDEN, true);
       }
+
+      // CLOSE threshold trigger line
+      string thrLineClose = "EMA_CONV_THR_LINE_CLOSE";
+      double thrPriceClose = basePrice - InpCloseThreshold * scaleFactor;
+      if(!ObjectFind(0, thrLineClose))
+         ObjectCreate(0, thrLineClose, OBJ_HLINE, 0, 0, thrPriceClose);
+      ObjectSetDouble(0, thrLineClose, OBJPROP_PRICE, thrPriceClose);
+      ObjectSetInteger(0, thrLineClose, OBJPROP_COLOR, InpThresholdSellClr);
+      ObjectSetInteger(0, thrLineClose, OBJPROP_STYLE, STYLE_DOT);
+      ObjectSetInteger(0, thrLineClose, OBJPROP_WIDTH, 1);
+      ObjectSetInteger(0, thrLineClose, OBJPROP_SELECTABLE, false);
+      ObjectSetInteger(0, thrLineClose, OBJPROP_HIDDEN, true);
    }
 
    // Comment on chart with current threshold values
-   string info = StringFormat("Threshold: BUY=%.4f  CLOSE=%.4f  (trigger: %.4f)",
-                              buyVal, closeVal, InpThreshold);
+   string info = StringFormat("BUY: %.4f / %.4f   CLOSE: %.4f / %.4f",
+                              buyVal, InpBuyThreshold, closeVal, InpCloseThreshold);
    Comment(info);
 }
 //+------------------------------------------------------------------+
