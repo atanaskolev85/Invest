@@ -13,6 +13,64 @@
 
 #include <Trade\Trade.mqh>
 
+//--- Day of week filter
+enum ENUM_DAY_OF_WEEK
+{
+   DAY_SUNDAY    = 0, // Sunday
+   DAY_MONDAY    = 1, // Monday
+   DAY_TUESDAY   = 2, // Tuesday
+   DAY_WEDNESDAY = 3, // Wednesday
+   DAY_THURSDAY  = 4, // Thursday
+   DAY_FRIDAY    = 5, // Friday
+   DAY_SATURDAY  = 6  // Saturday
+};
+
+//--- Hour enums (H00-H23)
+enum ENUM_TRADE_HOUR
+{
+   H00 = 0,  // 00:xx
+   H01 = 1,  // 01:xx
+   H02 = 2,  // 02:xx
+   H03 = 3,  // 03:xx
+   H04 = 4,  // 04:xx
+   H05 = 5,  // 05:xx
+   H06 = 6,  // 06:xx
+   H07 = 7,  // 07:xx
+   H08 = 8,  // 08:xx
+   H09 = 9,  // 09:xx
+   H10 = 10, // 10:xx
+   H11 = 11, // 11:xx
+   H12 = 12, // 12:xx
+   H13 = 13, // 13:xx
+   H14 = 14, // 14:xx
+   H15 = 15, // 15:xx
+   H16 = 16, // 16:xx
+   H17 = 17, // 17:xx
+   H18 = 18, // 18:xx
+   H19 = 19, // 19:xx
+   H20 = 20, // 20:xx
+   H21 = 21, // 21:xx
+   H22 = 22, // 22:xx
+   H23 = 23  // 23:xx
+};
+
+//--- Minute enums (M00-M55, step 5)
+enum ENUM_TRADE_MINUTE
+{
+   M00 = 0,  // xx:00
+   M05 = 5,  // xx:05
+   M10 = 10, // xx:10
+   M15 = 15, // xx:15
+   M20 = 20, // xx:20
+   M25 = 25, // xx:25
+   M30 = 30, // xx:30
+   M35 = 35, // xx:35
+   M40 = 40, // xx:40
+   M45 = 45, // xx:45
+   M50 = 50, // xx:50
+   M55 = 55  // xx:55
+};
+
 //--- Input parameters
 input int       InpFastPeriod      = 12;           // Fast EMA period
 input int       InpSlowPeriod      = 26;           // Slow EMA period
@@ -25,6 +83,15 @@ input int       InpMagicNumber     = 20260309;      // Magic number
 input bool      InpShowThreshold   = true;          // Show threshold visualization
 input color     InpThresholdBuyClr = clrDodgerBlue; // Threshold color (buy side)
 input color     InpThresholdSellClr= clrOrangeRed;  // Threshold color (close side)
+
+//--- Time filter parameters
+input bool              InpUseTimeFilter    = false;        // Enable time filter
+input ENUM_DAY_OF_WEEK  InpDayFrom          = DAY_MONDAY;   // Trading day from
+input ENUM_DAY_OF_WEEK  InpDayTo            = DAY_FRIDAY;   // Trading day to
+input ENUM_TRADE_HOUR   InpStartHour        = H09;          // Trading start hour
+input ENUM_TRADE_MINUTE InpStartMinute      = M30;          // Trading start minute
+input ENUM_TRADE_HOUR   InpStopHour         = H17;          // Trading stop hour
+input ENUM_TRADE_MINUTE InpStopMinute       = M00;          // Trading stop minute
 
 //--- Global handles and buffers
 int      g_handleFastEMA;
@@ -110,8 +177,8 @@ void OnTick()
       }
    }
 
-   //--- Check for BUY signal
-   if(buyThresholdVal >= InpBuyThreshold)
+   //--- Check for BUY signal (only within trading window)
+   if(buyThresholdVal >= InpBuyThreshold && IsWithinTradingWindow())
    {
       if(!HasOpenPosition(POSITION_TYPE_BUY))
       {
@@ -157,6 +224,49 @@ void OnTick()
    //--- Visualization: draw threshold bars on chart
    if(InpShowThreshold)
       DrawThresholdBar(currentBarTime, buyThresholdVal, closeThresholdVal);
+}
+
+//+------------------------------------------------------------------+
+//| Check if current time is within the allowed trading window       |
+//+------------------------------------------------------------------+
+bool IsWithinTradingWindow()
+{
+   if(!InpUseTimeFilter)
+      return true;
+
+   MqlDateTime dt;
+   TimeCurrent(dt);
+
+   //--- Day of week filter
+   int dow = dt.day_of_week;
+   if(InpDayFrom <= InpDayTo)
+   {
+      if(dow < InpDayFrom || dow > InpDayTo)
+         return false;
+   }
+   else // wraps around weekend, e.g. Friday(5) -> Monday(1)
+   {
+      if(dow < InpDayFrom && dow > InpDayTo)
+         return false;
+   }
+
+   //--- Time of day filter
+   int currentMinutes = dt.hour * 60 + dt.min;
+   int startMinutes   = (int)InpStartHour * 60 + (int)InpStartMinute;
+   int stopMinutes    = (int)InpStopHour  * 60 + (int)InpStopMinute;
+
+   if(startMinutes <= stopMinutes)
+   {
+      if(currentMinutes < startMinutes || currentMinutes >= stopMinutes)
+         return false;
+   }
+   else // wraps past midnight, e.g. 22:00 -> 06:00
+   {
+      if(currentMinutes < startMinutes && currentMinutes >= stopMinutes)
+         return false;
+   }
+
+   return true;
 }
 
 //+------------------------------------------------------------------+
