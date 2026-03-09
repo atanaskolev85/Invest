@@ -17,12 +17,13 @@
 input int       InpFastPeriod      = 12;           // Fast EMA period
 input int       InpSlowPeriod      = 26;           // Slow EMA period
 input double    InpThreshold       = 0.05;         // Convergence acceleration threshold
-input double    InpLotSize         = 0.1;           // Lot size
+input double    InpRiskPct         = 2.0;           // Risk per trade (% of balance)
 input double    InpStopLossPct     = 1.0;           // Stop-loss percentage (%)
 input int       InpCrossConfBars   = 3;             // Bars to confirm EMA cross
 input int       InpMagicNumber     = 20260309;      // Magic number
-input color     InpBuyArrowColor   = clrDodgerBlue; // Buy arrow color
-input color     InpCloseArrowColor = clrOrangeRed;  // Close arrow color
+input bool      InpShowThreshold   = true;          // Show threshold visualization
+input color     InpThresholdBuyClr = clrDodgerBlue; // Threshold color (buy side)
+input color     InpThresholdSellClr= clrOrangeRed;  // Threshold color (close side)
 
 //--- Global handles and buffers
 int      g_handleFastEMA;
@@ -95,68 +96,66 @@ void OnTick()
    double gap1 = slowEMA1 - fastEMA1; // previous
    double gap2 = slowEMA2 - fastEMA2; // two bars ago
 
-   //--- Check for BUY signal (fast below slow, converging)
-   if(gap2 > 0 && gap1 > 0 && gap0 > 0) // fast is below slow for all 3 bars
+   //--- Calculate threshold value for BUY side (fast below slow)
+   double buyThresholdVal = 0;
+   if(gap2 > 0 && gap1 > 0 && gap0 > 0)
    {
-      if(MathAbs(gap2) > 1e-10 && MathAbs(gap1) > 1e-10) // division-by-zero protection
+      if(MathAbs(gap2) > 1e-10 && MathAbs(gap1) > 1e-10)
       {
          double ratioPrev = gap1 / gap2;
          double ratioCurr = gap0 / gap1;
+         if(ratioPrev < 1.0 && ratioCurr < 1.0)
+            buyThresholdVal = ratioPrev - ratioCurr;
+      }
+   }
 
-         if(ratioPrev < 1.0 && ratioCurr < 1.0) // converging for 2 consecutive bars
+   //--- Check for BUY signal
+   if(buyThresholdVal >= InpThreshold)
+   {
+      if(!HasOpenPosition(POSITION_TYPE_BUY))
+      {
+         double ask  = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+         double sl   = NormalizeDouble(ask * (1.0 - InpStopLossPct / 100.0), _Digits);
+         double lots = CalculateLotSize(ask, sl);
+
+         if(lots > 0 && g_trade.Buy(lots, _Symbol, ask, sl, 0, "EMA Conv BUY"))
          {
-            if((ratioPrev - ratioCurr) >= InpThreshold) // acceleration
-            {
-               if(!HasOpenPosition(POSITION_TYPE_BUY))
-               {
-                  double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
-                  double sl  = NormalizeDouble(ask * (1.0 - InpStopLossPct / 100.0), _Digits);
-
-                  if(g_trade.Buy(InpLotSize, _Symbol, ask, sl, 0, "EMA Conv BUY"))
-                  {
-                     g_slRemovedBuy = false;
-                     DrawArrow("EMA_CONV_BUY_", currentBarTime, iLow(_Symbol, PERIOD_CURRENT, 0),
-                               InpBuyArrowColor, 233, true); // arrow up
-                     Print("BUY signal: ratioPrev=", ratioPrev, " ratioCurr=", ratioCurr,
-                           " diff=", ratioPrev - ratioCurr);
-                  }
-               }
-            }
+            g_slRemovedBuy = false;
+            Print("BUY signal: threshold=", buyThresholdVal, " lots=", lots);
          }
       }
    }
 
-   //--- Check for CLOSE signal (reverse of buy: fast above slow, diverging)
-   // In invest mode we close the long position instead of opening a short
-   if(gap2 < 0 && gap1 < 0 && gap0 < 0) // fast is above slow for all 3 bars
+   //--- Calculate threshold value for CLOSE side (fast above slow)
+   double closeThresholdVal = 0;
+   if(gap2 < 0 && gap1 < 0 && gap0 < 0)
    {
       double absGap0 = MathAbs(gap0);
       double absGap1 = MathAbs(gap1);
       double absGap2 = MathAbs(gap2);
 
-      if(absGap2 > 1e-10 && absGap1 > 1e-10) // division-by-zero protection
+      if(absGap2 > 1e-10 && absGap1 > 1e-10)
       {
          double ratioPrev = absGap1 / absGap2;
          double ratioCurr = absGap0 / absGap1;
-
-         if(ratioPrev < 1.0 && ratioCurr < 1.0) // converging downward for 2 consecutive bars
-         {
-            if((ratioPrev - ratioCurr) >= InpThreshold) // acceleration
-            {
-               if(CloseAllBuyPositions())
-               {
-                  DrawArrow("EMA_CONV_CLOSE_", currentBarTime, iHigh(_Symbol, PERIOD_CURRENT, 0),
-                            InpCloseArrowColor, 234, false); // arrow down
-                  Print("CLOSE signal: ratioPrev=", ratioPrev, " ratioCurr=", ratioCurr,
-                        " diff=", ratioPrev - ratioCurr);
-               }
-            }
-         }
+         if(ratioPrev < 1.0 && ratioCurr < 1.0)
+            closeThresholdVal = ratioPrev - ratioCurr;
       }
+   }
+
+   //--- Check for CLOSE signal
+   if(closeThresholdVal >= InpThreshold)
+   {
+      if(CloseAllBuyPositions())
+         Print("CLOSE signal: threshold=", closeThresholdVal);
    }
 
    //--- Manage stop-loss removal after confirmed EMA cross
    ManageStopLoss(fastEMA0, fastEMA1, slowEMA0, slowEMA1);
+
+   //--- Visualization: draw threshold bars on chart
+   if(InpShowThreshold)
+      DrawThresholdBar(currentBarTime, buyThresholdVal, closeThresholdVal);
 }
 
 //+------------------------------------------------------------------+
@@ -267,26 +266,112 @@ bool IsCrossConfirmed(bool isBuy)
 }
 
 //+------------------------------------------------------------------+
-//| Draw signal arrow on the chart                                   |
+//| Calculate lot size based on risk % of balance                    |
+//| Risk amount = Balance * RiskPct / 100                            |
+//| SL distance in money per lot = (entry - sl) * contract_size     |
+//| Lots = risk_amount / sl_distance_per_lot                         |
 //+------------------------------------------------------------------+
-void DrawArrow(string prefix, datetime time, double price, color clr, int arrowCode, bool isBuy)
+double CalculateLotSize(double entryPrice, double slPrice)
 {
-   string name = prefix + TimeToString(time, TIME_DATE | TIME_SECONDS);
+   double balance      = AccountInfoDouble(ACCOUNT_BALANCE);
+   double riskAmount   = balance * InpRiskPct / 100.0;
+   double slDistance    = MathAbs(entryPrice - slPrice);
 
-   // Offset the arrow slightly from the candle
-   double offset = SymbolInfoDouble(_Symbol, SYMBOL_POINT) * 20;
-   if(isBuy)
-      price -= offset;
-   else
-      price += offset;
+   if(slDistance < _Point)
+      return 0;
 
-   if(ObjectCreate(0, name, OBJ_ARROW, 0, time, price))
+   double contractSize = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_CONTRACT_SIZE);
+   double costPerLot   = slDistance * contractSize;
+
+   if(costPerLot <= 0)
+      return 0;
+
+   double lots = riskAmount / costPerLot;
+
+   // Clamp to broker limits
+   double minLot  = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
+   double maxLot  = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX);
+   double lotStep = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
+
+   lots = MathFloor(lots / lotStep) * lotStep;
+   if(lots < minLot) lots = minLot;
+   if(lots > maxLot) lots = maxLot;
+
+   return NormalizeDouble(lots, 2);
+}
+
+//+------------------------------------------------------------------+
+//| Draw threshold value as a histogram bar on the chart             |
+//| Uses a separate sub-window style via OBJ_HISTOGRAM objects       |
+//| placed at the bottom of the main chart.                          |
+//+------------------------------------------------------------------+
+void DrawThresholdBar(datetime time, double buyVal, double closeVal)
+{
+   // Draw BUY-side threshold (positive, blue)
+   if(buyVal > 0)
    {
-      ObjectSetInteger(0, name, OBJPROP_ARROWCODE, arrowCode);
-      ObjectSetInteger(0, name, OBJPROP_COLOR, clr);
-      ObjectSetInteger(0, name, OBJPROP_WIDTH, 2);
-      ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
-      ObjectSetInteger(0, name, OBJPROP_HIDDEN, true);
+      string name = "EMA_CONV_THR_BUY_" + TimeToString(time, TIME_DATE | TIME_SECONDS);
+      double low  = iLow(_Symbol, PERIOD_CURRENT, 0);
+      double range = iHigh(_Symbol, PERIOD_CURRENT, 0) - low;
+      if(range <= 0) range = _Point * 100;
+
+      // Scale threshold into price space: bar height proportional to threshold
+      // Normalize so that threshold == InpThreshold maps to ~30% of candle range
+      double scaleFactor = (range * 0.3) / InpThreshold;
+      double barHeight   = buyVal * scaleFactor;
+      double basePrice   = low - range * 0.15;
+
+      // Vertical line from base to base+height
+      if(ObjectCreate(0, name, OBJ_TREND, 0, time, basePrice, time, basePrice + barHeight))
+      {
+         ObjectSetInteger(0, name, OBJPROP_COLOR, InpThresholdBuyClr);
+         ObjectSetInteger(0, name, OBJPROP_WIDTH, 4);
+         ObjectSetInteger(0, name, OBJPROP_RAY_RIGHT, false);
+         ObjectSetInteger(0, name, OBJPROP_RAY_LEFT, false);
+         ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
+         ObjectSetInteger(0, name, OBJPROP_HIDDEN, true);
+      }
+
+      // Threshold trigger line
+      string thrLine = "EMA_CONV_THR_LINE";
+      double thrPrice = basePrice + InpThreshold * scaleFactor;
+      if(!ObjectFind(0, thrLine))
+         ObjectCreate(0, thrLine, OBJ_HLINE, 0, 0, thrPrice);
+      ObjectSetDouble(0, thrLine, OBJPROP_PRICE, thrPrice);
+      ObjectSetInteger(0, thrLine, OBJPROP_COLOR, clrGray);
+      ObjectSetInteger(0, thrLine, OBJPROP_STYLE, STYLE_DOT);
+      ObjectSetInteger(0, thrLine, OBJPROP_WIDTH, 1);
+      ObjectSetInteger(0, thrLine, OBJPROP_SELECTABLE, false);
+      ObjectSetInteger(0, thrLine, OBJPROP_HIDDEN, true);
    }
+
+   // Draw CLOSE-side threshold (negative direction, red)
+   if(closeVal > 0)
+   {
+      string name = "EMA_CONV_THR_CLS_" + TimeToString(time, TIME_DATE | TIME_SECONDS);
+      double low  = iLow(_Symbol, PERIOD_CURRENT, 0);
+      double range = iHigh(_Symbol, PERIOD_CURRENT, 0) - low;
+      if(range <= 0) range = _Point * 100;
+
+      double scaleFactor = (range * 0.3) / InpThreshold;
+      double barHeight   = closeVal * scaleFactor;
+      double basePrice   = low - range * 0.15;
+
+      // Draw downward from base
+      if(ObjectCreate(0, name, OBJ_TREND, 0, time, basePrice, time, basePrice - barHeight))
+      {
+         ObjectSetInteger(0, name, OBJPROP_COLOR, InpThresholdSellClr);
+         ObjectSetInteger(0, name, OBJPROP_WIDTH, 4);
+         ObjectSetInteger(0, name, OBJPROP_RAY_RIGHT, false);
+         ObjectSetInteger(0, name, OBJPROP_RAY_LEFT, false);
+         ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
+         ObjectSetInteger(0, name, OBJPROP_HIDDEN, true);
+      }
+   }
+
+   // Comment on chart with current threshold values
+   string info = StringFormat("Threshold: BUY=%.4f  CLOSE=%.4f  (trigger: %.4f)",
+                              buyVal, closeVal, InpThreshold);
+   Comment(info);
 }
 //+------------------------------------------------------------------+
