@@ -13,16 +13,11 @@
 
 #include <Trade\Trade.mqh>
 
-//--- Day of week filter
-enum ENUM_DAY_OF_WEEK
+//--- Threshold mode
+enum ENUM_THRESHOLD_MODE
 {
-   DAY_SUNDAY    = 0, // Sunday
-   DAY_MONDAY    = 1, // Monday
-   DAY_TUESDAY   = 2, // Tuesday
-   DAY_WEDNESDAY = 3, // Wednesday
-   DAY_THURSDAY  = 4, // Thursday
-   DAY_FRIDAY    = 5, // Friday
-   DAY_SATURDAY  = 6  // Saturday
+   THRESHOLD_UNIFIED  = 0, // Unified (same for entry & exit)
+   THRESHOLD_SEPARATE = 1  // Separate entry & exit
 };
 
 //--- Hour enums (H00-H23)
@@ -74,8 +69,13 @@ enum ENUM_TRADE_MINUTE
 //--- Input parameters
 input int       InpFastPeriod      = 12;           // Fast EMA period
 input int       InpSlowPeriod      = 26;           // Slow EMA period
-input double    InpBuyThreshold    = 0.05;         // Entry threshold (convergence acceleration)
-input double    InpCloseThreshold  = 0.05;         // Exit threshold (convergence acceleration)
+
+//--- Threshold parameters
+input ENUM_THRESHOLD_MODE InpThresholdMode = THRESHOLD_UNIFIED; // Threshold mode
+input double    InpThreshold       = 0.05;          // Unified threshold (entry & exit)
+input double    InpBuyThreshold    = 0.05;          // Entry threshold (Separate mode)
+input double    InpCloseThreshold  = 0.05;          // Exit threshold (Separate mode)
+
 input double    InpRiskPct         = 2.0;           // Risk per trade (% of balance)
 input double    InpStopLossPct     = 1.0;           // Stop-loss percentage (%)
 input int       InpCrossConfBars   = 3;             // Bars to confirm EMA cross
@@ -85,13 +85,18 @@ input color     InpThresholdBuyClr = clrDodgerBlue; // Threshold color (buy side
 input color     InpThresholdSellClr= clrOrangeRed;  // Threshold color (close side)
 
 //--- Time filter parameters
-input bool              InpUseTimeFilter    = false;        // Enable time filter
-input ENUM_DAY_OF_WEEK  InpDayFrom          = DAY_MONDAY;   // Trading day from
-input ENUM_DAY_OF_WEEK  InpDayTo            = DAY_FRIDAY;   // Trading day to
-input ENUM_TRADE_HOUR   InpStartHour        = H09;          // Trading start hour
-input ENUM_TRADE_MINUTE InpStartMinute      = M30;          // Trading start minute
-input ENUM_TRADE_HOUR   InpStopHour         = H17;          // Trading stop hour
-input ENUM_TRADE_MINUTE InpStopMinute       = M00;          // Trading stop minute
+input bool              InpUseTimeFilter    = false;  // Enable time filter
+input bool              InpTradeSunday      = false;  // Trade on Sunday
+input bool              InpTradeMonday      = true;   // Trade on Monday
+input bool              InpTradeTuesday     = true;   // Trade on Tuesday
+input bool              InpTradeWednesday   = true;   // Trade on Wednesday
+input bool              InpTradeThursday    = true;   // Trade on Thursday
+input bool              InpTradeFriday      = true;   // Trade on Friday
+input bool              InpTradeSaturday    = false;  // Trade on Saturday
+input ENUM_TRADE_HOUR   InpStartHour        = H09;    // Trading start hour
+input ENUM_TRADE_MINUTE InpStartMinute      = M30;    // Trading start minute
+input ENUM_TRADE_HOUR   InpStopHour         = H17;    // Trading stop hour
+input ENUM_TRADE_MINUTE InpStopMinute       = M00;    // Trading stop minute
 
 //--- Global handles and buffers
 int      g_handleFastEMA;
@@ -100,6 +105,10 @@ CTrade   g_trade;
 
 //--- State tracking
 bool     g_slRemovedBuy = false;
+
+//--- Effective thresholds (resolved from mode)
+double   g_buyThreshold;
+double   g_closeThreshold;
 
 //+------------------------------------------------------------------+
 //| Expert initialization                                            |
@@ -117,6 +126,18 @@ int OnInit()
 
    g_trade.SetExpertMagicNumber(InpMagicNumber);
    g_trade.SetDeviationInPoints(10);
+
+   //--- Resolve effective thresholds
+   if(InpThresholdMode == THRESHOLD_UNIFIED)
+   {
+      g_buyThreshold   = InpThreshold;
+      g_closeThreshold = InpThreshold;
+   }
+   else
+   {
+      g_buyThreshold   = InpBuyThreshold;
+      g_closeThreshold = InpCloseThreshold;
+   }
 
    return INIT_SUCCEEDED;
 }
@@ -178,7 +199,7 @@ void OnTick()
    }
 
    //--- Check for BUY signal (only within trading window)
-   if(buyThresholdVal >= InpBuyThreshold && IsWithinTradingWindow())
+   if(buyThresholdVal >= g_buyThreshold && IsWithinTradingWindow())
    {
       if(!HasOpenPosition(POSITION_TYPE_BUY))
       {
@@ -212,7 +233,7 @@ void OnTick()
    }
 
    //--- Check for CLOSE signal
-   if(closeThresholdVal >= InpCloseThreshold)
+   if(closeThresholdVal >= g_closeThreshold)
    {
       if(CloseAllBuyPositions())
          Print("CLOSE signal: threshold=", closeThresholdVal);
@@ -237,17 +258,16 @@ bool IsWithinTradingWindow()
    MqlDateTime dt;
    TimeCurrent(dt);
 
-   //--- Day of week filter
-   int dow = dt.day_of_week;
-   if(InpDayFrom <= InpDayTo)
+   //--- Day of week filter (per-day toggle)
+   switch(dt.day_of_week)
    {
-      if(dow < InpDayFrom || dow > InpDayTo)
-         return false;
-   }
-   else // wraps around weekend, e.g. Friday(5) -> Monday(1)
-   {
-      if(dow < InpDayFrom && dow > InpDayTo)
-         return false;
+      case 0: if(!InpTradeSunday)    return false; break;
+      case 1: if(!InpTradeMonday)    return false; break;
+      case 2: if(!InpTradeTuesday)   return false; break;
+      case 3: if(!InpTradeWednesday) return false; break;
+      case 4: if(!InpTradeThursday)  return false; break;
+      case 5: if(!InpTradeFriday)    return false; break;
+      case 6: if(!InpTradeSaturday)  return false; break;
    }
 
    //--- Time of day filter
@@ -427,7 +447,7 @@ void DrawThresholdBar(datetime time, double buyVal, double closeVal)
       if(range <= 0) range = _Point * 100;
 
       // Use the larger threshold for consistent scaling
-      double maxThr = MathMax(InpBuyThreshold, InpCloseThreshold);
+      double maxThr = MathMax(g_buyThreshold, g_closeThreshold);
       double scaleFactor = (range * 0.3) / maxThr;
       double barHeight   = buyVal * scaleFactor;
       double basePrice   = low - range * 0.15;
@@ -445,7 +465,7 @@ void DrawThresholdBar(datetime time, double buyVal, double closeVal)
 
       // BUY threshold trigger line
       string thrLineBuy = "EMA_CONV_THR_LINE_BUY";
-      double thrPriceBuy = basePrice + InpBuyThreshold * scaleFactor;
+      double thrPriceBuy = basePrice + g_buyThreshold * scaleFactor;
       if(!ObjectFind(0, thrLineBuy))
          ObjectCreate(0, thrLineBuy, OBJ_HLINE, 0, 0, thrPriceBuy);
       ObjectSetDouble(0, thrLineBuy, OBJPROP_PRICE, thrPriceBuy);
@@ -464,7 +484,7 @@ void DrawThresholdBar(datetime time, double buyVal, double closeVal)
       double range = iHigh(_Symbol, PERIOD_CURRENT, 0) - low;
       if(range <= 0) range = _Point * 100;
 
-      double maxThr = MathMax(InpBuyThreshold, InpCloseThreshold);
+      double maxThr = MathMax(g_buyThreshold, g_closeThreshold);
       double scaleFactor = (range * 0.3) / maxThr;
       double barHeight   = closeVal * scaleFactor;
       double basePrice   = low - range * 0.15;
@@ -482,7 +502,7 @@ void DrawThresholdBar(datetime time, double buyVal, double closeVal)
 
       // CLOSE threshold trigger line
       string thrLineClose = "EMA_CONV_THR_LINE_CLOSE";
-      double thrPriceClose = basePrice - InpCloseThreshold * scaleFactor;
+      double thrPriceClose = basePrice - g_closeThreshold * scaleFactor;
       if(!ObjectFind(0, thrLineClose))
          ObjectCreate(0, thrLineClose, OBJ_HLINE, 0, 0, thrPriceClose);
       ObjectSetDouble(0, thrLineClose, OBJPROP_PRICE, thrPriceClose);
@@ -495,7 +515,7 @@ void DrawThresholdBar(datetime time, double buyVal, double closeVal)
 
    // Comment on chart with current threshold values
    string info = StringFormat("BUY: %.4f / %.4f   CLOSE: %.4f / %.4f",
-                              buyVal, InpBuyThreshold, closeVal, InpCloseThreshold);
+                              buyVal, g_buyThreshold, closeVal, g_closeThreshold);
    Comment(info);
 }
 //+------------------------------------------------------------------+
