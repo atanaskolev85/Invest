@@ -1,10 +1,11 @@
 //+------------------------------------------------------------------+
 //|                                    EMA_Convergence_Detector.mq5  |
-//|                              EMA Convergence / Divergence EA     |
+//|                     EMA Convergence Detector – Invest Mode       |
 //|                                                                  |
-//|  Detects accelerating convergence between fast & slow EMA and    |
-//|  fires BUY/SELL signals. Includes 1% static stop-loss that is    |
-//|  removed once the EMA cross is confirmed by 3 consecutive bars.  |
+//|  BUY-only EA for invest (non-CFD) accounts.                      |
+//|  Detects accelerating EMA convergence to open long positions.    |
+//|  Uses the mirror logic (fast diverging above slow) to close.     |
+//|  1% static stop-loss removed after EMA cross confirmed by 3 bars.|
 //+------------------------------------------------------------------+
 #property copyright "EMA Convergence Detector"
 #property version   "1.00"
@@ -21,7 +22,7 @@ input double    InpStopLossPct     = 1.0;           // Stop-loss percentage (%)
 input int       InpCrossConfBars   = 3;             // Bars to confirm EMA cross
 input int       InpMagicNumber     = 20260309;      // Magic number
 input color     InpBuyArrowColor   = clrDodgerBlue; // Buy arrow color
-input color     InpSellArrowColor  = clrOrangeRed;  // Sell arrow color
+input color     InpCloseArrowColor = clrOrangeRed;  // Close arrow color
 
 //--- Global handles and buffers
 int      g_handleFastEMA;
@@ -29,8 +30,7 @@ int      g_handleSlowEMA;
 CTrade   g_trade;
 
 //--- State tracking
-bool     g_slRemovedBuy  = false;
-bool     g_slRemovedSell = false;
+bool     g_slRemovedBuy = false;
 
 //+------------------------------------------------------------------+
 //| Expert initialization                                            |
@@ -126,8 +126,8 @@ void OnTick()
       }
    }
 
-   //--- Check for SELL signal (fast above slow, converging downward)
-   // Mirror: gap is negative (fast > slow), use absolute gaps
+   //--- Check for CLOSE signal (reverse of buy: fast above slow, diverging)
+   // In invest mode we close the long position instead of opening a short
    if(gap2 < 0 && gap1 < 0 && gap0 < 0) // fast is above slow for all 3 bars
    {
       double absGap0 = MathAbs(gap0);
@@ -139,23 +139,16 @@ void OnTick()
          double ratioPrev = absGap1 / absGap2;
          double ratioCurr = absGap0 / absGap1;
 
-         if(ratioPrev < 1.0 && ratioCurr < 1.0) // converging for 2 consecutive bars
+         if(ratioPrev < 1.0 && ratioCurr < 1.0) // converging downward for 2 consecutive bars
          {
             if((ratioPrev - ratioCurr) >= InpThreshold) // acceleration
             {
-               if(!HasOpenPosition(POSITION_TYPE_SELL))
+               if(CloseAllBuyPositions())
                {
-                  double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
-                  double sl  = NormalizeDouble(bid * (1.0 + InpStopLossPct / 100.0), _Digits);
-
-                  if(g_trade.Sell(InpLotSize, _Symbol, bid, sl, 0, "EMA Conv SELL"))
-                  {
-                     g_slRemovedSell = false;
-                     DrawArrow("EMA_CONV_SELL_", currentBarTime, iHigh(_Symbol, PERIOD_CURRENT, 0),
-                               InpSellArrowColor, 234, false); // arrow down
-                     Print("SELL signal: ratioPrev=", ratioPrev, " ratioCurr=", ratioCurr,
-                           " diff=", ratioPrev - ratioCurr);
-                  }
+                  DrawArrow("EMA_CONV_CLOSE_", currentBarTime, iHigh(_Symbol, PERIOD_CURRENT, 0),
+                            InpCloseArrowColor, 234, false); // arrow down
+                  Print("CLOSE signal: ratioPrev=", ratioPrev, " ratioCurr=", ratioCurr,
+                        " diff=", ratioPrev - ratioCurr);
                }
             }
          }
@@ -196,39 +189,48 @@ void ManageStopLoss(double fastNow, double fastPrev, double slowNow, double slow
       if(PositionGetInteger(POSITION_MAGIC) != InpMagicNumber) continue;
 
       ENUM_POSITION_TYPE posType = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
+      if(posType != POSITION_TYPE_BUY) continue;
+
       double currentSL = PositionGetDouble(POSITION_SL);
 
       // Skip if SL is already removed (set to 0)
       if(currentSL == 0)
          continue;
 
-      //--- BUY position: cross is confirmed when fast > slow for N consecutive bars
-      if(posType == POSITION_TYPE_BUY)
+      //--- BUY position: remove SL when fast > slow confirmed for N consecutive bars
+      if(IsCrossConfirmed(true))
       {
-         if(IsCrossConfirmed(true))
+         double tp = PositionGetDouble(POSITION_TP);
+         if(g_trade.PositionModify(ticket, 0, tp))
          {
-            double tp = PositionGetDouble(POSITION_TP);
-            if(g_trade.PositionModify(ticket, 0, tp))
-            {
-               Print("BUY SL removed: EMA bullish cross confirmed for ", InpCrossConfBars, " bars");
-               g_slRemovedBuy = true;
-            }
-         }
-      }
-      //--- SELL position: cross is confirmed when fast < slow for N consecutive bars
-      else if(posType == POSITION_TYPE_SELL)
-      {
-         if(IsCrossConfirmed(false))
-         {
-            double tp = PositionGetDouble(POSITION_TP);
-            if(g_trade.PositionModify(ticket, 0, tp))
-            {
-               Print("SELL SL removed: EMA bearish cross confirmed for ", InpCrossConfBars, " bars");
-               g_slRemovedSell = true;
-            }
+            Print("BUY SL removed: EMA bullish cross confirmed for ", InpCrossConfBars, " bars");
+            g_slRemovedBuy = true;
          }
       }
    }
+}
+
+//+------------------------------------------------------------------+
+//| Close all open BUY positions for this symbol and magic           |
+//+------------------------------------------------------------------+
+bool CloseAllBuyPositions()
+{
+   bool closed = false;
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket == 0) continue;
+      if(PositionGetString(POSITION_SYMBOL) != _Symbol) continue;
+      if(PositionGetInteger(POSITION_MAGIC) != InpMagicNumber) continue;
+      if((ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE) != POSITION_TYPE_BUY) continue;
+
+      if(g_trade.PositionClose(ticket))
+      {
+         Print("Closed BUY position #", ticket);
+         closed = true;
+      }
+   }
+   return closed;
 }
 
 //+------------------------------------------------------------------+
