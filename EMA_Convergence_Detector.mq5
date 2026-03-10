@@ -88,7 +88,7 @@ input color     InpThresholdBuyClr = clrDodgerBlue; // Threshold color (buy side
 input color     InpThresholdSellClr= clrOrangeRed;  // Threshold color (close side)
 
 //--- Time filter parameters
-input bool              InpUseTimeFilter    = false;  // Enable time filter
+input bool              InpUseDayFilter     = true;   // Enable day-of-week filter
 input bool              InpTradeSunday      = false;  // Trade on Sunday
 input bool              InpTradeMonday      = true;   // Trade on Monday
 input bool              InpTradeTuesday     = true;   // Trade on Tuesday
@@ -96,6 +96,7 @@ input bool              InpTradeWednesday   = true;   // Trade on Wednesday
 input bool              InpTradeThursday    = true;   // Trade on Thursday
 input bool              InpTradeFriday      = true;   // Trade on Friday
 input bool              InpTradeSaturday    = false;  // Trade on Saturday
+input bool              InpUseTimeFilter    = false;  // Enable time-of-day filter
 input ENUM_TRADE_HOUR   InpStartHour        = H09;    // Trading start hour
 input ENUM_TRADE_MINUTE InpStartMinute      = M30;    // Trading start minute
 input ENUM_TRADE_HOUR   InpStopHour         = H17;    // Trading stop hour
@@ -256,38 +257,41 @@ void OnTick()
 //+------------------------------------------------------------------+
 bool IsWithinTradingWindow()
 {
-   if(!InpUseTimeFilter)
-      return true;
-
    MqlDateTime dt;
    TimeCurrent(dt);
 
-   //--- Day of week filter (per-day toggle)
-   switch(dt.day_of_week)
+   //--- Day of week filter (independent toggle)
+   if(InpUseDayFilter)
    {
-      case 0: if(!InpTradeSunday)    return false; break;
-      case 1: if(!InpTradeMonday)    return false; break;
-      case 2: if(!InpTradeTuesday)   return false; break;
-      case 3: if(!InpTradeWednesday) return false; break;
-      case 4: if(!InpTradeThursday)  return false; break;
-      case 5: if(!InpTradeFriday)    return false; break;
-      case 6: if(!InpTradeSaturday)  return false; break;
+      switch(dt.day_of_week)
+      {
+         case 0: if(!InpTradeSunday)    return false; break;
+         case 1: if(!InpTradeMonday)    return false; break;
+         case 2: if(!InpTradeTuesday)   return false; break;
+         case 3: if(!InpTradeWednesday) return false; break;
+         case 4: if(!InpTradeThursday)  return false; break;
+         case 5: if(!InpTradeFriday)    return false; break;
+         case 6: if(!InpTradeSaturday)  return false; break;
+      }
    }
 
-   //--- Time of day filter
-   int currentMinutes = dt.hour * 60 + dt.min;
-   int startMinutes   = (int)InpStartHour * 60 + (int)InpStartMinute;
-   int stopMinutes    = (int)InpStopHour  * 60 + (int)InpStopMinute;
+   //--- Time of day filter (independent toggle)
+   if(InpUseTimeFilter)
+   {
+      int currentMinutes = dt.hour * 60 + dt.min;
+      int startMinutes   = (int)InpStartHour * 60 + (int)InpStartMinute;
+      int stopMinutes    = (int)InpStopHour  * 60 + (int)InpStopMinute;
 
-   if(startMinutes <= stopMinutes)
-   {
-      if(currentMinutes < startMinutes || currentMinutes >= stopMinutes)
-         return false;
-   }
-   else // wraps past midnight, e.g. 22:00 -> 06:00
-   {
-      if(currentMinutes < startMinutes && currentMinutes >= stopMinutes)
-         return false;
+      if(startMinutes <= stopMinutes)
+      {
+         if(currentMinutes < startMinutes || currentMinutes >= stopMinutes)
+            return false;
+      }
+      else // wraps past midnight, e.g. 22:00 -> 06:00
+      {
+         if(currentMinutes < startMinutes && currentMinutes >= stopMinutes)
+            return false;
+      }
    }
 
    return true;
