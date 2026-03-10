@@ -79,6 +79,7 @@ input double    InpCloseThreshold  = 0.05;          // Exit threshold (Separate 
 
 input double    InpRiskPct         = 2.0;           // Risk per trade (% of balance)
 input double    InpStopLossPct     = 1.0;           // Stop-loss percentage (%)
+input bool      InpRemoveSLOnCross = true;          // Remove SL after confirmed EMA cross
 input int       InpCrossConfBars   = 3;             // Bars to confirm EMA cross
 input int       InpMagicNumber     = 20260309;      // Magic number
 input string    InpOrderComment    = "EMA Conv";     // Order comment
@@ -242,7 +243,8 @@ void OnTick()
    }
 
    //--- Manage stop-loss removal after confirmed EMA cross
-   ManageStopLoss(fastEMA0, fastEMA1, slowEMA0, slowEMA1);
+   if(InpRemoveSLOnCross)
+      ManageStopLoss(fastEMA0, fastEMA1, slowEMA0, slowEMA1);
 
    //--- Visualization: draw threshold bars on chart
    if(InpShowThreshold)
