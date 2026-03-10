@@ -80,6 +80,7 @@ input double    InpRiskPct         = 2.0;           // Risk per trade (% of bala
 input double    InpStopLossPct     = 1.0;           // Stop-loss percentage (%)
 input int       InpCrossConfBars   = 3;             // Bars to confirm EMA cross
 input int       InpMagicNumber     = 20260309;      // Magic number
+input string    InpOrderComment    = "EMA Conv";     // Order comment
 input bool      InpShowThreshold   = true;          // Show threshold visualization
 input color     InpThresholdBuyClr = clrDodgerBlue; // Threshold color (buy side)
 input color     InpThresholdSellClr= clrOrangeRed;  // Threshold color (close side)
@@ -207,7 +208,7 @@ void OnTick()
          double sl   = NormalizeDouble(ask * (1.0 - InpStopLossPct / 100.0), _Digits);
          double lots = CalculateLotSize(ask, sl);
 
-         if(lots > 0 && g_trade.Buy(lots, _Symbol, ask, sl, 0, "EMA Conv BUY"))
+         if(lots > 0 && g_trade.Buy(lots, _Symbol, ask, sl, 0, InpOrderComment))
          {
             g_slRemovedBuy = false;
             Print("BUY signal: threshold=", buyThresholdVal, " lots=", lots);
