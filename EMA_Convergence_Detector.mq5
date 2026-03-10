@@ -69,6 +69,7 @@ enum ENUM_TRADE_MINUTE
 //--- Input parameters
 input int       InpFastPeriod      = 12;           // Fast EMA period
 input int       InpSlowPeriod      = 26;           // Slow EMA period
+input ENUM_APPLIED_PRICE InpAppliedPrice = PRICE_CLOSE; // EMA applied price
 
 //--- Threshold parameters
 input ENUM_THRESHOLD_MODE InpThresholdMode = THRESHOLD_UNIFIED; // Threshold mode
@@ -116,8 +117,8 @@ double   g_closeThreshold;
 //+------------------------------------------------------------------+
 int OnInit()
 {
-   g_handleFastEMA = iMA(_Symbol, PERIOD_CURRENT, InpFastPeriod, 0, MODE_EMA, PRICE_CLOSE);
-   g_handleSlowEMA = iMA(_Symbol, PERIOD_CURRENT, InpSlowPeriod, 0, MODE_EMA, PRICE_CLOSE);
+   g_handleFastEMA = iMA(_Symbol, PERIOD_CURRENT, InpFastPeriod, 0, MODE_EMA, InpAppliedPrice);
+   g_handleSlowEMA = iMA(_Symbol, PERIOD_CURRENT, InpSlowPeriod, 0, MODE_EMA, InpAppliedPrice);
 
    if(g_handleFastEMA == INVALID_HANDLE || g_handleSlowEMA == INVALID_HANDLE)
    {
